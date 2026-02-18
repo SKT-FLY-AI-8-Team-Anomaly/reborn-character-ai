@@ -50,7 +50,7 @@ def root():
 
 
 @app.post("/profile")
-def create_profile(
+async def create_profile(
     image: UploadFile = File(..., description="사용자 원본 이미지 (image.png 등)"),
     uploadUrl: str = Form(..., description="SAS 포함, 생성된 프로필 이미지를 PUT할 URL"),
     blobUrl: str = Form(..., description="SAS 없음, 업로드 후 읽을 때 쓸 URL (참고용)"),
@@ -63,7 +63,7 @@ def create_profile(
         raise HTTPException(400, "image file required")
 
     try:
-        image_bytes = image.read()
+        image_bytes = await image.read()
     except Exception as e:
         raise HTTPException(400, f"Failed to read image: {e}") from e
     if not image_bytes:
