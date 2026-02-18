@@ -1,0 +1,20 @@
+# API 키·비밀 (절대 커밋 금지)
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+venv/
+.venv/
+
+# 출력/캐시
+outputs/
+app/outputs/
+*.log
+
+# 클론한 빈 저장소 (원격은 origin으로 이 프로젝트에서 push)
+reborn-character-ai/
