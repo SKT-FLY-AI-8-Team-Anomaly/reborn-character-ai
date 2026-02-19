@@ -2,11 +2,55 @@
 6프레임 가로 스프라이트 시트 → 4방향 8프레임 시트 후처리.
 
 - 유령 픽셀 세척 (알파 200 이하 → 완전 투명)
-- 여백 크롭 → 6등분 → 좌측 2프레임 반전으로 8프레임 구성
-- 프레임별 타이트 크롭 → 격자 배치(발끝 정렬) → PNG bytes 반환
+- 스마트 슬라이싱: 알파 채널로 캐릭터 경계 감지 후 6프레임 분리 (균등 6등분 대신)
+- 좌측 2프레임 반전 → 8프레임 구성 → 격자 배치(발끝 정렬) → PNG bytes 반환
 """
 import io
+import numpy as np
 from PIL import Image, ImageOps
+
+
+def _equal_slice_6_frames(transparent_image: Image.Image) -> list[Image.Image]:
+    """이미지 너비를 균등 6등분하여 6프레임으로 자른다. 스마트 슬라이스 실패 시 폴백용."""
+    w, h = transparent_image.size
+    if w < 6:
+        raise ValueError("SMART_SLICE_ERROR: Image too narrow for 6 frames.")
+    step = w // 6
+    frames = []
+    for i in range(6):
+        x0, x1 = i * step, (i + 1) * step if i < 5 else w
+        frames.append(transparent_image.crop((x0, 0, x1, h)))
+    return frames
+
+
+def smart_slice_6_frames(transparent_image: Image.Image) -> list[Image.Image]:
+    """
+    투명 배경의 1x6 이미지를 입력받아, 캐릭터 사이의 빈 공간을 감지하여
+    정확히 6개의 개별 캐릭터 이미지 리스트로 분리하여 반환합니다.
+    6개를 찾지 못하면 균등 6등분 폴백을 사용합니다.
+    """
+    img_arr = np.array(transparent_image)
+    alpha_channel = img_arr[:, :, 3]
+
+    non_empty_columns = np.where(np.any(alpha_channel > 0, axis=0))[0]
+    if len(non_empty_columns) == 0:
+        raise ValueError("SMART_SLICE_ERROR: No character pixels found in image.")
+
+    split_indices = np.where(np.diff(non_empty_columns) > 1)[0] + 1
+    character_column_groups = np.split(non_empty_columns, split_indices)
+
+    detected_count = len(character_column_groups)
+    if detected_count == 6:
+        sliced_frames = []
+        for group in character_column_groups:
+            start_x = int(group[0])
+            end_x = int(group[-1]) + 1
+            frame = transparent_image.crop((start_x, 0, end_x, transparent_image.height))
+            sliced_frames.append(frame)
+        return sliced_frames
+
+    # 6개가 아니면 균등 6등분 폴백 (AI가 포즈를 붙여 그려서 덩어리가 3개 등으로 나온 경우)
+    return _equal_slice_6_frames(transparent_image)
 
 
 def process_6frame_to_4dir_8frame(image_bytes: bytes) -> bytes:
@@ -34,14 +78,11 @@ def process_6frame_to_4dir_8frame(image_bytes: bytes) -> bytes:
     if bbox:
         img = img.crop(bbox)
 
-    # 6등분
-    num_original_frames = 6
-    frame_w = img.width // num_original_frames
-    frame_h = img.height
-    original_frames = [
-        img.crop((i * frame_w, 0, (i + 1) * frame_w, frame_h))
-        for i in range(num_original_frames)
-    ]
+    # 스마트 슬라이싱: 알파 채널로 캐릭터 경계 감지 후 6프레임 분리 (6개 아니면 ValueError)
+    try:
+        original_frames = smart_slice_6_frames(img)
+    except ValueError:
+        raise
 
     # 왼쪽 방향: Right 프레임(0, 1) 좌우 반전
     left_idle = ImageOps.mirror(original_frames[0])
@@ -70,9 +111,7 @@ def process_6frame_to_4dir_8frame(image_bytes: bytes) -> bytes:
             max_w = max(max_w, t.width)
             max_h = max(max_h, t.height)
         else:
-            trimmed_frames.append(frame)
-            max_w = max(max_w, frame.width)
-            max_h = max(max_h, frame.height)
+            raise ValueError("SMART_SLICE_ERROR: Empty frame after crop (character image is empty).")
 
     # 격자 배치 (여유 공간 20px)
     grid_size = max(max_w, max_h) + 20
